@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speak Easy</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>Speak Easy</h1>
+  <button id="logoutBtn" class="ghost" type="button">Salir</button>
+</header>
+
+<main>
+  <section class="card">
+    <div class="modes" role="tablist" aria-label="Modo">
+      <button id="modeEs" class="mode active" type="button" role="tab" aria-selected="true">Español → English</button>
+      <button id="modeEn" class="mode" type="button" role="tab" aria-selected="false">English → pronunciación</button>
+    </div>
+    <label id="inputLabel" for="inputText">Escribe en español:</label>
+    <textarea id="inputText" rows="3" maxlength="400" placeholder="Ej. Necesito ayuda, por favor"></textarea>
+    <button id="goBtn" class="primary" type="button">Traducir</button>
+    <p id="errorMsg" class="error" hidden></p>
+  </section>
+
+  <section id="resultCard" class="card result" hidden>
+    <p class="kicker">English</p>
+    <p class="english"><span id="resultEnglish"></span>
+      <button id="listenBtn" class="listen" type="button" aria-label="Escuchar">🔊</button>
+    </p>
+    <p class="kicker">Se pronuncia</p>
+    <p id="resultPhonetic" class="phonetic"></p>
+  </section>
+
+  <section class="card">
+    <h2>Frases para practicar</h2>
+    <div id="packs"></div>
+  </section>
+
+  <section class="card">
+    <h2>Recientes</h2>
+    <div id="history" class="history"></div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

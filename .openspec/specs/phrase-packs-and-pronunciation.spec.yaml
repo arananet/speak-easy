@@ -1,0 +1,50 @@
+title: "Phrase packs and pronunciation playback"
+slug: "phrase-packs-and-pronunciation"
+type: feature
+status: review
+
+author: "arananet"
+created_at: "2026-10-19"
+updated_at: "2026-10-19"
+
+roles:
+  implementer: "arananet"
+  reviewer: null
+  qa: null
+  product_owner: "arananet"
+
+description: |
+  Blanca learns fastest from phrases she will actually say. The app ships
+  with curated phrase packs as static JSON, each phrase carrying its
+  Spanish original, English translation, and hand-written Spanish
+  phonetics, so tapping a phrase needs no AI call. The launch packs are
+  caregiving (her path toward care work), everyday life, and
+  emergencies. Every English result, typed or tapped, has a listen
+  button that plays it aloud with the browser's built-in US English
+  text-to-speech, letting her compare what she reads with what she
+  hears. Recent translations are kept in a local history on her device.
+
+acceptance_criteria:
+  - "Given the app loads authenticated, when the packs render, then three packs appear: caregiving, everyday, emergencies, each phrase tappable"
+  - "Given a phrase is tapped, when it opens, then the English, the Spanish phonetics, and a listen button show without any /api/translate call"
+  - "Given the listen button is tapped, when speech plays, then it uses a US English voice at slightly slowed rate via the browser speechSynthesis API"
+  - "Given a translation is produced, when it completes, then it is appended to a history of the last 20 items in localStorage, newest first"
+  - "Given history exists, when an item is tapped, then its result re-renders instantly"
+  - "Given the phonetics in phrases.json, when read aloud by a native Spanish speaker, then each maps back to its English phrase"
+
+test_plan:
+  - "Automated: scripts/test.sh validates phrases.json is well-formed, every entry has es/en/phonetic, and no entry is missing the phonetic field"
+  - "Manual mobile: tap through every pack, play every listen button, confirm history keeps the last 20 across reloads"
+
+qa_notes: |
+  Check speechSynthesis voice availability on Blanca's actual phone
+  (Android Chrome ships US English voices; verify once on her device).
+
+out_of_scope:
+  - "Recording Blanca's voice or pronunciation scoring"
+  - "Editable or user-created packs (future)"
+  - "Server-side TTS (keeps inference on Workers AI only)"
+
+technical_notes: |
+  phrases.json is inlined into the worker at build time and served at
+  /api/phrases. TTS is 100 percent client-side; no secret involved.

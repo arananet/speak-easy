@@ -1,0 +1,54 @@
+title: "Translate and Spanish-phonetic inference"
+slug: "translate-phonetic-inference"
+type: feature
+status: review
+
+author: "arananet"
+created_at: "2026-10-19"
+updated_at: "2026-10-19"
+
+roles:
+  implementer: "arananet"
+  reviewer: null
+  qa: null
+  product_owner: "arananet"
+
+description: |
+  The core learning loop: Blanca types a phrase in Spanish and gets back
+  the natural US English translation plus the same English rewritten so a
+  Spanish speaker can read it aloud with near-native pronunciation
+  ("My name is Eduardo" becomes "Mai neim is Eduardo"). A second mode
+  accepts English input and returns just the phonetic spelling, for
+  phrases she hears or reads elsewhere. Inference runs on Cloudflare
+  Workers AI through the Worker's AI binding, so no API token or secret
+  is ever exposed to the browser. The model returns strict JSON
+  {english, phonetic}, parsed and validated server-side.
+
+acceptance_criteria:
+  - "Given an authenticated POST /api/translate with Spanish text, when the model responds, then the response is {english, phonetic} with natural US English and a Spanish-orthography phonetic spelling"
+  - "Given the example 'My name is Eduardo', when translated, then english is 'My name is Eduardo' and phonetic reads like 'Mai neim is Eduardo' (proper names kept as-is)"
+  - "Given English input in 'en' mode, when translated, then english echoes the corrected input and phonetic is its pronunciation spelling"
+  - "Given input longer than 400 characters or empty input, when posted, then the server responds 400 without calling the model"
+  - "Given the model returns markdown fences or extra text around the JSON, when parsed, then the server still extracts the JSON object"
+  - "Given the Workers AI call fails, when it happens, then the server responds 502 with a Spanish-language user-facing message and logs no secret"
+  - "Given the phonetic output, when read aloud by a native Spanish speaker, then the result is recognizably the English phrase (spot-checked on the seed examples)"
+
+test_plan:
+  - "Automated: scripts/test.sh validates the prompt template contains the required few-shot examples and that the JSON extraction handles fenced output"
+  - "Manual: translate 10 Spanish phrases covering th-sounds, w, h, and r; read each phonetic aloud and confirm it maps back to the English"
+
+qa_notes: |
+  Phonetic quality is the product. If llama-3.1-8b-instruct drifts on
+  tricky words, escalate the model in wrangler metadata rather than
+  complicating the prompt. Temperature stays low (0.3).
+
+out_of_scope:
+  - "Streaming responses"
+  - "Caching translations server-side"
+  - "Grammar explanations or corrections beyond light cleanup"
+
+technical_notes: |
+  Model: @cf/meta/llama-3.1-8b-instruct via env.AI.run(). Prompt carries
+  6 few-shot pairs (Spanish->English+phonetic and English->phonetic).
+  max_tokens 300, temperature 0.3. Binding declared in the worker upload
+  metadata as {"type": "ai", "name": "AI"}.

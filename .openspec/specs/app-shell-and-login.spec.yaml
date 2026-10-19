@@ -1,0 +1,52 @@
+title: "App shell and password login"
+slug: "app-shell-and-login"
+type: feature
+status: review
+
+author: "arananet"
+created_at: "2026-10-19"
+updated_at: "2026-10-19"
+
+roles:
+  implementer: "arananet"
+  reviewer: null
+  qa: null
+  product_owner: "arananet"
+
+description: |
+  Speak Easy is a single Cloudflare Worker that serves the whole app: a
+  mobile-first Spanish-language UI for Blanca, plus the JSON API the UI
+  calls. Because the GitHub repo is public, the app is gated by a simple
+  password login. The password lives only as a Cloudflare Worker secret
+  (APP_PASSWORD); it is never committed to the repo, never appears in
+  logs, and never reaches the browser except as the login form input.
+  A successful login sets a signed HttpOnly session cookie valid for
+  30 days. Every route, including static assets and the API, requires a
+  valid session; unauthenticated visitors only ever see the login page.
+
+acceptance_criteria:
+  - "Given no valid session cookie, when any route is requested, then the server responds with the login page (GET /) or 401 (assets and API)"
+  - "Given the correct password is posted to /api/login, when the check passes, then the server sets an HttpOnly, Secure, SameSite=Lax cookie whose value is expiry plus an HMAC-SHA256 signature over the app password"
+  - "Given a wrong password is posted to /api/login, when the check runs, then the server responds 401 and the comparison is timing-safe"
+  - "Given APP_PASSWORD is not configured on the Worker, when /api/login is called, then the server responds 500 telling the admin to configure the secret"
+  - "Given a session cookie older than 30 days or with a bad signature, when any route is requested, then the server treats it as unauthenticated"
+  - "Given POST /api/logout with a valid session, when it completes, then the session cookie is cleared"
+  - "Given the repo contents, when scanned, then no password, token, or secret value appears anywhere in the tree"
+
+test_plan:
+  - "Automated: node --check on the built worker; scripts/test.sh fails if any secret-like literal or {{placeholder}} remains in the repo"
+  - "Manual: wrong password shows an error and stays on login; right password enters the app; clearing cookies returns to login; API calls without the cookie get 401"
+
+qa_notes: |
+  Verify on a phone viewport that the login form is usable with large
+  touch targets. Verify the cookie is not readable from JavaScript
+  (document.cookie must not contain it).
+
+out_of_scope:
+  - "Per-user accounts, password reset flows, OAuth"
+  - "Cloudflare Access integration (possible future hardening)"
+
+technical_notes: |
+  Single module Worker, no KV. Session = base64url(expiry).hex(HMAC_SHA256(APP_PASSWORD, "speak-easy|" + expiry)).
+  Login page copy is in Spanish. The frontend files are inlined into the
+  worker at build time by scripts/build.js so deployment is one API call.

@@ -1,0 +1,41 @@
+# OpenSpec Configuration: speak-easy
+# Onboarded from arananet/openspec-template on 2026-10-19.
+# Proposed values (project name, owner, team) pending Edu's confirmation.
+
+project:
+  name: "speak-easy"
+  owner: "arananet"
+  team: "arananet"
+  domain: "language-learning"
+  description: "Speak Easy: English speaking coach for Spanish speakers. Type Spanish, get the English plus how it sounds written in Spanish phonetics, powered by Cloudflare Workers AI."
+  tech_stack: "javascript, cloudflare-workers, workers-ai"
+
+spec:
+  required_fields:
+    - title
+    - description
+    - acceptance_criteria
+    - test_plan
+    - status
+  enforce_on_pr: true
+  enforce_on_commit: true
+  min_acceptance_criteria: 1
+  statuses:
+    - draft
+    - review
+    - approved
+  approved_required_for_merge: false
+
+testing:
+  require_tests: true
+  test_command: "sh scripts/test.sh"
+  coverage_threshold: null
+  fail_on_missing_tests: true
+
+verification:
+  timeout_seconds: 300
+
+execution:
+  enabled: false
+  adapter: null
+  max_attempts: 1
