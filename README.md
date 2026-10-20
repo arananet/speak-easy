@@ -40,7 +40,7 @@ One Cloudflare Worker serves everything:
 
 * `GET /` serves the login page or the app, depending on the session cookie.
 * `GET /app.js`, `/styles.css` serve the frontend; `GET /api/phrases` serves the phrase packs.
-* `POST /api/translate` takes `{text, source}` and calls Workers AI (`@cf/meta/llama-3.1-8b-instruct`) through the Worker's AI binding. The prompt carries few-shot examples that teach the model the Spanish-orthography phonetic convention, and the server parses and validates the strict JSON `{english, phonetic}` before responding.
+* `POST /api/translate` takes `{text, source}` and calls Workers AI (`@cf/meta/infire-llama-3.1-8b-instruct`) through the Worker's AI binding. The prompt carries few-shot examples that teach the model the Spanish-orthography phonetic convention, and the server parses and validates the strict JSON `{english, phonetic}` before responding.
 * The frontend files are inlined into the worker at build time by `scripts/build.js`, so deployment is a single API call and no token ever reaches the browser.
 
 Specs live under [`.openspec/specs/`](.openspec/specs/): app shell and login, translate and phonetic inference, phrase packs and pronunciation.

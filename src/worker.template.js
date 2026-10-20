@@ -111,6 +111,16 @@ function extractJson(text) {
   return JSON.parse(text.slice(start, end + 1));
 }
 
+function aiResponseText(ai) {
+  if (!ai) return "";
+  if (typeof ai.response === "string" && ai.response.trim()) return ai.response;
+  const choice = ai.choices && ai.choices[0];
+  const content = choice && choice.message && choice.message.content;
+  if (typeof content === "string" && content.trim()) return content;
+  if (choice && typeof choice.text === "string") return choice.text;
+  return "";
+}
+
 async function handleTranslate(request, env) {
   let body;
   try {
@@ -123,16 +133,17 @@ async function handleTranslate(request, env) {
   if (!text || text.length > 400) {
     return jsonResponse({ error: "Escribe una frase de hasta 400 caracteres." }, 400);
   }
-  const prompt =
-    SYSTEM_PROMPT + "\n\nInput (" + (source === "es" ? "Spanish" : "English") + "): " + text;
   let aiText;
   try {
-    const ai = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
-      prompt,
+    const ai = await env.AI.run("@cf/meta/infire-llama-3.1-8b-instruct", {
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: "Input (" + (source === "es" ? "Spanish" : "English") + "): " + text },
+      ],
       max_tokens: 300,
       temperature: 0.3,
     });
-    aiText = ai && typeof ai.response === "string" ? ai.response : "";
+    aiText = aiResponseText(ai);
   } catch (e) {
     return jsonResponse({ error: "El servicio de traducción no responde. Inténtalo de nuevo." }, 502);
   }

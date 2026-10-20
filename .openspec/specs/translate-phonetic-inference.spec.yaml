@@ -48,7 +48,11 @@ out_of_scope:
   - "Grammar explanations or corrections beyond light cleanup"
 
 technical_notes: |
-  Model: @cf/meta/llama-3.1-8b-instruct via env.AI.run(). Prompt carries
-  6 few-shot pairs (Spanish->English+phonetic and English->phonetic).
-  max_tokens 300, temperature 0.3. Binding declared in the worker upload
-  metadata as {"type": "ai", "name": "AI"}.
+  Model: @cf/meta/infire-llama-3.1-8b-instruct via env.AI.run() with the
+  chat messages format. The legacy @cf/meta/llama-3.1-8b-instruct ID was
+  deprecated on 2026-05-30 (error 5028) and the successor returns an
+  OpenAI-style chat completion, so the server reads the text from
+  choices[0].message.content with a fallback to the classic response
+  field. Prompt carries 6 few-shot pairs (Spanish->English+phonetic and
+  English->phonetic). max_tokens 300, temperature 0.3. Binding declared
+  in the worker upload metadata as {"type": "ai", "name": "AI"}.

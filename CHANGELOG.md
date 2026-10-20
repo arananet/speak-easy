@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-19 — Fix: deprecated Workers AI model
+
+* `@cf/meta/llama-3.1-8b-instruct` was deprecated by Cloudflare on 2026-05-30 (Workers AI error 5028); every translation returned 502. Switched to the successor `@cf/meta/infire-llama-3.1-8b-instruct`.
+* The successor answers in the OpenAI chat completion shape, so the worker now calls it with the messages format and reads the text from `choices[0].message.content` with a fallback to the classic `response` field.
+
 ## 2026-10-19 — Initial release
 
 * Speak Easy: English speaking coach for Spanish speakers, built for Blanca.
