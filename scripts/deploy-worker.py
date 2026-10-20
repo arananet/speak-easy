@@ -77,6 +77,14 @@ def deploy():
     )
     if not resp.get("success"):
         raise RuntimeError(f"deploy failed: {resp}")
+    # Raw API uploads leave the workers.dev route disabled (error 1042);
+    # wrangler enables it by default, so do it explicitly here.
+    sub_resp = authed(
+        f"/accounts/{ACCOUNT_ID}/workers/scripts/{SCRIPT_NAME}/subdomain",
+        method="POST", data=json.dumps({"enabled": True}).encode(),
+    )
+    if not sub_resp.get("success"):
+        raise RuntimeError(f"subdomain enable failed: {sub_resp}")
     sub = authed(f"/accounts/{ACCOUNT_ID}/workers/subdomain").get("result", {}).get("subdomain")
     print(f"https://{SCRIPT_NAME}.{sub}.workers.dev")
 
