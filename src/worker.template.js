@@ -142,6 +142,11 @@ async function handleTranslate(request, env) {
       ],
       max_tokens: 300,
       temperature: 0.3,
+    }, {
+      gateway: {
+        id: "arananet-ai-gateway",
+        metadata: { app: "speak-easy", env: "prod" },
+      },
     });
     aiText = aiResponseText(ai);
   } catch (e) {
