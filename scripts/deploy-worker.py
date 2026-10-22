@@ -5,9 +5,10 @@ Uses the vault-stored token (custom.cloudflare). The token needs
 Workers Scripts Edit for deploys and secret management.
 
 Usage:
-    deploy-worker.py deploy            # build + upload worker (needs Workers Scripts Edit)
-    deploy-worker.py set-secret        # set APP_PASSWORD from a hidden prompt (never logged)
-    deploy-worker.py url               # print the workers.dev URL
+    deploy-worker.py deploy                  # build + upload worker (needs Workers Scripts Edit)
+    deploy-worker.py set-user-secret <user>  # set BLANQUITA_PASSWORD or EDUARDO_PASSWORD from a hidden prompt (never logged)
+    deploy-worker.py set-secret              # set the legacy APP_PASSWORD from a hidden prompt (never logged)
+    deploy-worker.py url                     # print the workers.dev URL
 
 The worker gets the Workers AI binding, so inference needs no token at runtime.
 """
@@ -89,6 +90,24 @@ def deploy():
     print(f"https://{SCRIPT_NAME}.{sub}.workers.dev")
 
 
+USER_SECRETS = {"blanquita": "BLANQUITA_PASSWORD", "eduardo": "EDUARDO_PASSWORD"}
+
+
+def set_user_secret(username):
+    binding = USER_SECRETS[username]
+    pw = getpass.getpass(f"{binding} for {username} (hidden, never logged): ").strip()
+    if len(pw) < 8:
+        raise RuntimeError("password must be at least 8 characters")
+    resp = authed(
+        f"/accounts/{ACCOUNT_ID}/workers/scripts/{SCRIPT_NAME}/secrets",
+        method="PUT",
+        data=json.dumps({"name": binding, "text": pw, "type": "secret_text"}).encode(),
+    )
+    if not resp.get("success"):
+        raise RuntimeError(f"set-user-secret failed: {resp}")
+    print(f"{binding} set")
+
+
 def set_secret():
     pw = getpass.getpass("APP_PASSWORD for Blanca (hidden, never logged): ").strip()
     if len(pw) < 8:
@@ -104,14 +123,22 @@ def set_secret():
 
 
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in ("deploy", "set-secret", "url"):
+    args = sys.argv[1:]
+    valid = (
+        len(args) == 1 and args[0] in ("deploy", "set-secret", "url")
+    ) or (
+        len(args) == 2 and args[0] == "set-user-secret" and args[1] in USER_SECRETS
+    )
+    if not valid:
         print(__doc__, file=sys.stderr)
         return 2
     try:
-        if sys.argv[1] == "deploy":
+        if args[0] == "deploy":
             deploy()
-        elif sys.argv[1] == "set-secret":
+        elif args[0] == "set-secret":
             set_secret()
+        elif args[0] == "set-user-secret":
+            set_user_secret(args[1])
         else:
             sub = authed(f"/accounts/{ACCOUNT_ID}/workers/subdomain").get("result", {}).get("subdomain")
             print(f"https://{SCRIPT_NAME}.{sub}.workers.dev")

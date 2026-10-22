@@ -1,11 +1,11 @@
-title: "App shell and password login"
+title: "App shell and per-user login"
 slug: "app-shell-and-login"
 type: feature
 status: review
 
 author: "arananet"
 created_at: "2026-10-19"
-updated_at: "2026-10-19"
+updated_at: "2026-10-22"
 
 roles:
   implementer: "arananet"
@@ -16,26 +16,41 @@ roles:
 description: |
   Speak Easy is a single Cloudflare Worker that serves the whole app: a
   mobile-first Spanish-language UI for Blanca, plus the JSON API the UI
-  calls. Because the GitHub repo is public, the app is gated by a simple
-  password login. The password lives only as a Cloudflare Worker secret
-  (APP_PASSWORD); it is never committed to the repo, never appears in
-  logs, and never reaches the browser except as the login form input.
-  A successful login sets a signed HttpOnly session cookie valid for
-  30 days. Every route, including static assets and the API, requires a
-  valid session; unauthenticated visitors only ever see the login page.
+  calls. Because the GitHub repo is public, the app is gated by named
+  user logins. There are two users, blanquita and eduardo, and each
+  user's password lives only as its own Cloudflare Worker secret
+  binding (the binding BLANQUITA_PASSWORD for blanquita and the binding
+  EDUARDO_PASSWORD for eduardo). Passwords are never committed to the
+  repo, never appear in logs, and never reach the browser except as
+  login form input. A successful login sets a signed HttpOnly session
+  cookie valid for 30 days; the signed payload carries the username, so
+  the session identifies who logged in. Every route, including static
+  assets and the API, requires a valid session; unauthenticated
+  visitors only ever see the login page.
+
+  Transition: the app previously used one shared password, the
+  APP_PASSWORD variable (stored as plain text, which is the weakness
+  this change removes). Until BOTH per-user secrets are set, the legacy
+  APP_PASSWORD is still accepted for either user, as a temporary
+  fallback so nobody is locked out. Once both secrets exist, the
+  fallback stops working and APP_PASSWORD can be deleted in the
+  dashboard, which closes the migration.
 
 acceptance_criteria:
   - "Given no valid session cookie, when any route is requested, then the server responds with the login page (GET /) or 401 (assets and API)"
-  - "Given the correct password is posted to /api/login, when the check passes, then the server sets an HttpOnly, Secure, SameSite=Lax cookie whose value is expiry plus an HMAC-SHA256 signature over the app password"
-  - "Given a wrong password is posted to /api/login, when the check runs, then the server responds 401 and the comparison is timing-safe"
-  - "Given APP_PASSWORD is not configured on the Worker, when /api/login is called, then the server responds 500 telling the admin to configure the secret"
-  - "Given a session cookie older than 30 days or with a bad signature, when any route is requested, then the server treats it as unauthenticated"
+  - "Given the login page, when it is served, then it asks for a user name (Usuario) and a password (Contraseña)"
+  - "Given a valid username and that user's correct password posted to /api/login, when the check passes, then the server responds 200 and sets an HttpOnly, Secure, SameSite=Lax cookie whose value is the expiry, the username, and an HMAC-SHA256 signature"
+  - "Given a wrong password or an unknown username posted to /api/login, when the check runs, then the server responds 401 and the comparisons are timing-safe"
+  - "Given either per-user secret is not set yet, when a login posts the legacy APP_PASSWORD for either user, then the server accepts it (temporary transition fallback)"
+  - "Given both per-user secrets are set, when a login posts the legacy APP_PASSWORD, then the server responds 401 because the fallback has retired"
+  - "Given no password material is configured on the Worker at all, when /api/login is called, then the server responds 500 telling the admin to configure the secrets"
+  - "Given a session cookie older than 30 days, with a bad signature, or issued before a password configuration change, when any route is requested, then the server treats it as unauthenticated"
   - "Given POST /api/logout with a valid session, when it completes, then the session cookie is cleared"
   - "Given the repo contents, when scanned, then no password, token, or secret value appears anywhere in the tree"
 
 test_plan:
-  - "Automated: node --check on the built worker; scripts/test.sh fails if any secret-like literal or {{placeholder}} remains in the repo"
-  - "Manual: wrong password shows an error and stays on login; right password enters the app; clearing cookies returns to login; API calls without the cookie get 401"
+  - "Automated: node --check on the built worker; scripts/test.sh runs a functional smoke test covering per-user logins, the transition fallback (active while a secret is missing, retired once both are set), tampered cookies, and input validation; test.sh also fails if any secret-like literal or unfilled placeholder remains in the repo"
+  - "Manual: unknown user and wrong password show an error and stay on login; right user and password enter the app; clearing cookies returns to login; API calls without the cookie get 401"
 
 qa_notes: |
   Verify on a phone viewport that the login form is usable with large
@@ -43,10 +58,15 @@ qa_notes: |
   (document.cookie must not contain it).
 
 out_of_scope:
-  - "Per-user accounts, password reset flows, OAuth"
+  - "Password reset flows, OAuth, additional users"
   - "Cloudflare Access integration (possible future hardening)"
 
 technical_notes: |
-  Single module Worker, no KV. Session = base64url(expiry).hex(HMAC_SHA256(APP_PASSWORD, "speak-easy|" + expiry)).
-  Login page copy is in Spanish. The frontend files are inlined into the
-  worker at build time by scripts/build.js so deployment is one API call.
+  Single module Worker, no KV. Session cookie value is
+  expiry.username.hex(HMAC_SHA256), where the HMAC covers
+  "speak-easy|" + username + "|" + expiry and the HMAC key is the
+  concatenation of the currently configured password bindings, so
+  setting or rotating a password invalidates earlier sessions.
+  Login page copy is in Spanish. The frontend files are inlined into
+  the worker at build time by scripts/build.js so deployment is one
+  API call.

@@ -49,18 +49,23 @@ Specs live under [`.openspec/specs/`](.openspec/specs/): app shell and login, tr
 
 ## Login
 
-The repo is public, so the app is password-protected. The password lives **only** as a Cloudflare Worker secret named `APP_PASSWORD`. It is never committed to the repo, never appears in logs, and the test gate fails if anything secret-like is committed.
+The repo is public, so the app is protected by named user logins. There are two users, **blanquita** and **eduardo**, and each password lives **only** as its own Cloudflare Worker secret: the binding `BLANQUITA_PASSWORD` holds blanquita's password and the binding `EDUARDO_PASSWORD` holds eduardo's. Passwords are never committed to the repo, never appear in logs, and the test gate fails if anything secret-like is committed. A successful login sets a signed session cookie that records which user logged in and lasts 30 days.
 
-**Set or rotate the password** (pick one):
+**Set or rotate a user's password** (pick one):
+
+* In the Cloudflare dashboard: Workers & Pages → speak-easy → Settings → Variables and Secrets → Add → Secret, using the binding name for that user.
+* From a terminal with the Cloudflare API token available:
 
 ```bash
-# from a terminal with the Cloudflare API token available
-python3 scripts/deploy-worker.py set-secret
+python3 scripts/deploy-worker.py set-user-secret blanquita
+python3 scripts/deploy-worker.py set-user-secret eduardo
 ```
 
-Or in the Cloudflare dashboard: Workers & Pages → speak-easy → Settings → Variables and Secrets → add secret `APP_PASSWORD`. Or with wrangler: `npx wrangler secret put APP_PASSWORD`.
+* Or with wrangler: `npx wrangler secret put BLANQUITA_PASSWORD` (and the same with `EDUARDO_PASSWORD`).
 
-**For Blanca:** open the app URL, type the password once, and the session lasts 30 days on that device. There is a Salir button to log out.
+**Transition note:** until both user secrets are set, the legacy shared `APP_PASSWORD` variable still signs either user in, as a temporary fallback so nobody is locked out. The moment both secrets exist, the fallback stops working; delete the `APP_PASSWORD` variable on the same dashboard screen to finish the migration.
+
+**For Blanca:** open the app URL, type your user name (blanquita) and your password once, and the session lasts 30 days on that device. There is a Salir button to log out.
 
 ---
 

@@ -15,28 +15,57 @@
     if (!ok) console.error("FAIL:", name);
   };
 
+  const login = (body, e = env) => worker.fetch(req("/api/login", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }), e);
+
   let r = await worker.fetch(req("/"), env);
   let t = await r.text();
-  check("unauth root shows login page", r.status === 200 && t.includes("Contrase"));
+  check("unauth root shows login page", r.status === 200 && t.includes("Contrase") && t.includes("Usuario"));
 
   r = await worker.fetch(req("/api/phrases"), env);
   check("unauth api is 401", r.status === 401);
 
-  r = await worker.fetch(req("/api/login", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: "wrong" }),
-  }), env);
+  r = await login({ username: "eduardo", password: "wrong" });
   check("wrong password is 401", r.status === 401);
 
-  r = await worker.fetch(req("/api/login", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password: testPassword }),
-  }), env);
+  r = await login({ username: "nadie", password: testPassword });
+  check("unknown user is 401", r.status === 401);
+
+  // Legacy fallback: with only APP_PASSWORD configured, it signs in either user.
+  r = await login({ username: "eduardo", password: testPassword });
   const setCookie = r.headers.get("Set-Cookie") || "";
-  check("login sets HttpOnly Secure cookie",
+  check("fallback login sets HttpOnly Secure cookie",
     r.status === 200 && /HttpOnly/.test(setCookie) && /Secure/.test(setCookie));
   const cookie = setCookie.split(";")[0];
+  check("session cookie identifies the user", cookie.includes(".eduardo."));
   const authed = { headers: { Cookie: cookie } };
+
+  r = await login({ username: "blanquita", password: testPassword });
+  check("fallback login works for blanquita too", r.status === 200);
+
+  // Both per-user secrets set: own secret works, shared APP_PASSWORD stops working.
+  const envUsers = {
+    BLANQUITA_PASSWORD: "blan-" + randomUUID(),
+    EDUARDO_PASSWORD: "edu-" + randomUUID(),
+    APP_PASSWORD: testPassword,
+  };
+  r = await login({ username: "blanquita", password: envUsers.BLANQUITA_PASSWORD }, envUsers);
+  check("blanquita logs in with her own secret", r.status === 200);
+  r = await login({ username: "eduardo", password: envUsers.EDUARDO_PASSWORD }, envUsers);
+  check("eduardo logs in with his own secret", r.status === 200);
+  r = await login({ username: "eduardo", password: envUsers.BLANQUITA_PASSWORD }, envUsers);
+  check("eduardo cannot use blanquita's secret", r.status === 401);
+  r = await login({ username: "blanquita", password: testPassword }, envUsers);
+  check("APP_PASSWORD fallback retires once both secrets are set", r.status === 401);
+
+  // Only one per-user secret set: the fallback still covers the other user.
+  const envPartial = { BLANQUITA_PASSWORD: envUsers.BLANQUITA_PASSWORD, APP_PASSWORD: testPassword };
+  r = await login({ username: "eduardo", password: testPassword }, envPartial);
+  check("fallback still covers eduardo while his secret is unset", r.status === 200);
+  r = await login({ username: "blanquita", password: envUsers.BLANQUITA_PASSWORD }, envPartial);
+  check("blanquita's own secret already works in partial config", r.status === 200);
 
   r = await worker.fetch(req("/", authed), env);
   t = await r.text();
@@ -58,10 +87,8 @@
   r = await worker.fetch(req("/api/logout", { method: "POST", ...authed }), env);
   check("logout clears cookie", /Max-Age=0/.test(r.headers.get("Set-Cookie") || ""));
 
-  r = await worker.fetch(req("/api/login", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
-  }), {});
-  check("missing APP_PASSWORD is 500", r.status === 500);
+  r = await login({ username: "eduardo", password: "whatever" }, {});
+  check("no password configured at all is 500", r.status === 500);
 
   r = await worker.fetch(req("/api/translate", {
     method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie },

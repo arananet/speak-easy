@@ -1,7 +1,9 @@
 // Speak Easy worker template.
 // Build placeholders __APP_HTML__, __APP_JS__, __APP_CSS__, __PHRASES_JSON__
 // are replaced by scripts/build.js with JSON-stringified file contents.
-// Runtime bindings: env.AI (Workers AI), env.APP_PASSWORD (secret).
+// Runtime bindings: env.AI (Workers AI), env.BLANQUITA_PASSWORD and
+// env.EDUARDO_PASSWORD (per-user login secrets), env.APP_PASSWORD
+// (legacy shared password, temporary login fallback only, see below).
 
 const APP_HTML = __APP_HTML__;
 const APP_JS = __APP_JS__;
@@ -19,21 +21,31 @@ const LOGIN_HTML = [
   'button{width:100%;padding:.85rem;font-size:1.05rem;font-weight:700;color:#fff;background:#1d7a4f;border:none;border-radius:10px;cursor:pointer}',
   '.err{color:#b3261e;font-weight:600;min-height:1.4em}</style></head>',
   '<body><div class="box"><h1>Speak Easy</h1>',
-  '<p>Escribe la contraseña para entrar.</p>',
+  '<p>Escribe tu usuario y tu contraseña para entrar.</p>',
   '<p class="err" id="e"></p>',
+  '<input type="text" id="u" placeholder="Usuario" autocomplete="username" autocapitalize="none" spellcheck="false">',
   '<input type="password" id="p" placeholder="Contraseña" autocomplete="current-password">',
   '<button id="b">Entrar</button></div>',
   '<script>',
-  'document.getElementById("b").onclick=async()=>{',
+  'const go=async()=>{',
+  'const u=document.getElementById("u").value.trim();',
   'const pw=document.getElementById("p").value;',
-  'const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pw})});',
-  'if(r.ok){location.reload()}else{document.getElementById("e").textContent="Contraseña incorrecta."}};',
-  'document.getElementById("p").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("b").click()});',
+  'const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:pw})});',
+  'if(r.ok){location.reload()}else{document.getElementById("e").textContent="Usuario o contraseña incorrectos."}};',
+  'document.getElementById("b").onclick=go;',
+  'for(const id of ["u","p"])document.getElementById(id).addEventListener("keydown",e=>{if(e.key==="Enter")go()});',
   '</scr' + 'ipt></body></html>',
 ].join("");
 
 const SESSION_COOKIE = "se_sess";
 const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
+
+// Named user logins. Each user's password lives ONLY in the secret
+// binding listed here; no password value ever appears in this repo.
+const USER_SECRET_BINDINGS = {
+  blanquita: "BLANQUITA_PASSWORD",
+  eduardo: "EDUARDO_PASSWORD",
+};
 
 function getCookie(request, name) {
   const header = request.headers.get("Cookie") || "";
@@ -61,22 +73,69 @@ function timingSafeEqual(a, b) {
   return diff === 0;
 }
 
-async function makeSession(password) {
-  const exp = String(Date.now() + SESSION_TTL_MS);
-  const sig = await hmacHex(password, "speak-easy|" + exp);
-  return exp + "." + sig;
+function userSecret(env, username) {
+  const binding = USER_SECRET_BINDINGS[username];
+  if (!binding) return null;
+  const value = env[binding];
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-async function isAuthed(request, env) {
-  if (!env.APP_PASSWORD) return false;
+function allUserSecretsSet(env) {
+  return Object.keys(USER_SECRET_BINDINGS).every((u) => userSecret(env, u) !== null);
+}
+
+function anyPasswordConfigured(env) {
+  if (typeof env.APP_PASSWORD === "string" && env.APP_PASSWORD.length > 0) return true;
+  return Object.keys(USER_SECRET_BINDINGS).some((u) => userSecret(env, u) !== null);
+}
+
+// Transition fallback (temporary): until BOTH per-user secrets exist,
+// the legacy shared APP_PASSWORD is still accepted for either user, so
+// nobody gets locked out while the new secrets are being set. As soon
+// as BLANQUITA_PASSWORD and EDUARDO_PASSWORD are both set, APP_PASSWORD
+// stops being accepted and Edu can delete that binding in the dashboard.
+function passwordAccepted(env, username, password) {
+  const own = userSecret(env, username);
+  if (own !== null && timingSafeEqual(password, own)) return true;
+  if (!allUserSecretsSet(env) &&
+      typeof env.APP_PASSWORD === "string" && env.APP_PASSWORD.length > 0 &&
+      timingSafeEqual(password, env.APP_PASSWORD)) {
+    return true;
+  }
+  return false;
+}
+
+// Sessions are signed with the current password configuration itself,
+// so setting or rotating any password invalidates sessions issued
+// before the change and the user simply logs in again.
+function sessionSigningKey(env) {
+  return [env.BLANQUITA_PASSWORD, env.EDUARDO_PASSWORD, env.APP_PASSWORD]
+    .filter((v) => typeof v === "string" && v.length > 0)
+    .join("|");
+}
+
+// Session cookie value: "<expiry>.<username>.<HMAC hex>". Embedding the
+// username in the signed payload is what identifies who logged in.
+async function makeSession(env, username) {
+  const exp = String(Date.now() + SESSION_TTL_MS);
+  const sig = await hmacHex(sessionSigningKey(env), "speak-easy|" + username + "|" + exp);
+  return exp + "." + username + "." + sig;
+}
+
+// Returns the username that owns the session, or null when the request
+// carries no valid session.
+async function sessionUser(request, env) {
+  const key = sessionSigningKey(env);
+  if (!key) return null;
   const cookie = getCookie(request, SESSION_COOKIE);
-  if (!cookie) return false;
-  const dot = cookie.indexOf(".");
-  if (dot === -1) return false;
-  const exp = cookie.slice(0, dot), sig = cookie.slice(dot + 1);
-  if (!/^\d+$/.test(exp) || Number(exp) < Date.now()) return false;
-  const expected = await hmacHex(env.APP_PASSWORD, "speak-easy|" + exp);
-  return timingSafeEqual(sig, expected);
+  if (!cookie) return null;
+  const parts = cookie.split(".");
+  if (parts.length !== 3) return null;
+  const exp = parts[0], username = parts[1], sig = parts[2];
+  if (!/^\d+$/.test(exp) || Number(exp) < Date.now()) return null;
+  if (!Object.prototype.hasOwnProperty.call(USER_SECRET_BINDINGS, username)) return null;
+  const expected = await hmacHex(key, "speak-easy|" + username + "|" + exp);
+  return timingSafeEqual(sig, expected) ? username : null;
 }
 
 function jsonResponse(obj, status = 200, headers = {}) {
@@ -166,7 +225,7 @@ async function handleTranslate(request, env) {
 }
 
 async function handleLogin(request, env) {
-  if (!env.APP_PASSWORD) {
+  if (!anyPasswordConfigured(env)) {
     return jsonResponse({ error: "Login no configurado en el servidor." }, 500);
   }
   let body;
@@ -175,18 +234,20 @@ async function handleLogin(request, env) {
   } catch {
     return jsonResponse({ error: "Petición inválida." }, 400);
   }
+  const username = typeof body.username === "string" ? body.username.trim().toLowerCase() : "";
   const password = typeof body.password === "string" ? body.password : "";
-  if (!timingSafeEqual(password, env.APP_PASSWORD)) {
-    return jsonResponse({ error: "Contraseña incorrecta." }, 401);
+  const knownUser = Object.prototype.hasOwnProperty.call(USER_SECRET_BINDINGS, username);
+  if (!knownUser || !passwordAccepted(env, username, password)) {
+    return jsonResponse({ error: "Usuario o contraseña incorrectos." }, 401);
   }
-  const session = await makeSession(env.APP_PASSWORD);
+  const session = await makeSession(env, username);
   const headers = {
     "Set-Cookie":
       SESSION_COOKIE + "=" + session +
       "; Path=/; Max-Age=" + Math.floor(SESSION_TTL_MS / 1000) +
       "; HttpOnly; Secure; SameSite=Lax",
   };
-  return jsonResponse({ ok: true }, 200, headers);
+  return jsonResponse({ ok: true, user: username }, 200, headers);
 }
 
 export default {
@@ -203,8 +264,8 @@ export default {
       });
     }
 
-    const authed = await isAuthed(request, env);
-    if (!authed) {
+    const authedUser = await sessionUser(request, env);
+    if (!authedUser) {
       if (path === "/" || path === "/index.html") {
         return new Response(LOGIN_HTML, { headers: { "Content-Type": "text/html; charset=utf-8" } });
       }
