@@ -145,29 +145,79 @@ function jsonResponse(obj, status = 200, headers = {}) {
   });
 }
 
-const SYSTEM_PROMPT = [
-  "You are a pronunciation coach helping a native Spanish speaker speak English.",
-  "Reply with ONLY a JSON object, no other text:",
-  '{"english": "<the phrase in natural US English>", "phonetic": "<how it sounds, spelled for a Spanish reader>"}',
-  "Rules:",
-  "- If the input is Spanish, translate it to natural US English for \"english\".",
-  "- If the input is already English, fix only clear mistakes and keep it in \"english\".",
-  "- \"phonetic\" rewrites the English so a Spanish speaker reading it aloud sounds close to native English. Use Spanish spelling habits:",
-  '  "My name is Eduardo" -> "Mai neim is Eduardo"',
-  '  "I need help" -> "Ai nid jelp"',
-  '  "Thank you very much" -> "Zank iu veri mach"',
-  '  "Where is the bathroom?" -> "Juer is de bazrum?"',
-  '  "I don\'t speak English very well" -> "Ai dont spik inglish veri uel"',
-  '  "Can you speak more slowly, please?" -> "Can iu spik mor slouli, plis?"',
-  "- Write \"th\" as \"z\" at the start of words like thank, think (\"zank\", \"zink\"), as \"d\" in the, this, that (\"de\", \"dis\", \"dat\").",
-  "- Keep proper names unchanged. Keep punctuation. Never add explanations.",
-].join("\n");
+// Inference is split into two calls (bugfix spec
+// phonetic-generated-from-source-bug): first translate or correct,
+// then respell ONLY the English phrase phonetically. A single call
+// doing both made the small model respell the Spanish source instead
+// ("Me gusta mi escuela" came back as "Ai gis ta mai eskoola").
+const AI_MODEL = "@cf/mistralai/mistral-small-3.1-24b-instruct";
+const AI_GATEWAY = {
+  gateway: { id: "arananet-ai-gateway", metadata: { app: "speak-easy", env: "prod" } },
+};
 
-function extractJson(text) {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) throw new Error("no-json");
-  return JSON.parse(text.slice(start, end + 1));
+const TRANSLATE_SYSTEM =
+  "You are a translator. Translate the user's Spanish phrase into natural, everyday US English. " +
+  "Reply with ONLY the English translation: no quotes, no explanations, no extra text.";
+
+const CORRECT_SYSTEM =
+  "You correct English phrases written by a learner. Fix only clear spelling or grammar mistakes and keep the meaning and wording otherwise. " +
+  "Reply with ONLY the corrected phrase: no quotes, no explanations, no extra text.";
+
+const PHONETIC_SYSTEM =
+  "You rewrite English phrases so a native Spanish speaker can read them aloud and sound close to native English, using Spanish spelling habits. " +
+  "One output word for each English word. Keep proper names unchanged. Keep punctuation. Reply with ONLY the rewritten phrase, nothing else. " +
+  "Key sounds: 'th' at the start of thank/think becomes 'z'; 'th' in the/this/that becomes 'd'; word-start 'h' becomes 'j'; " +
+  "'school' sounds 'skul'; 'like' sounds 'laik'; 'my' sounds 'mai'.";
+
+// Few-shot pairs in the same style as the curated phrase packs.
+const PHONETIC_EXAMPLES = [
+  ["My name is Blanca", "Mai neim is Blanca"],
+  ["I need help", "Ai nid jelp"],
+  ["Thank you very much", "Zank iu veri mach"],
+  ["Where is the bathroom?", "Juer is de bazrum?"],
+  ["I like my school", "Ai laik mai skul"],
+  ["I am here to help you", "Ai am jir tu jelp iu"],
+  ["Can you speak more slowly, please?", "Can iu spik mor slouli, plis?"],
+  ["Do you need anything?", "Du iu nid enizing?"],
+];
+
+function phoneticMessages(english) {
+  const messages = [{ role: "system", content: PHONETIC_SYSTEM }];
+  for (const [en, ph] of PHONETIC_EXAMPLES) {
+    messages.push({ role: "user", content: en });
+    messages.push({ role: "assistant", content: ph });
+  }
+  messages.push({ role: "user", content: english });
+  return messages;
+}
+
+// Model replies should be one bare phrase; strip fences, wrapping
+// quotes and stray leading labels just in case.
+function cleanLine(text) {
+  let t = (text || "").trim();
+  t = t.replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/, "");
+  const lines = t.split("\n").map((l) => l.trim()).filter(Boolean);
+  t = lines.length ? lines[lines.length - 1] : "";
+  if (t.length >= 2 && ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'")))) {
+    t = t.slice(1, -1).trim();
+  }
+  return t;
+}
+
+function wordCount(s) {
+  return s.split(/\s+/).filter(Boolean).length;
+}
+
+// Sanity check that the phonetic really tracks the English phrase and
+// is not a respelling of the Spanish input: comparable word counts, no
+// inverted Spanish punctuation, and no accented vowels that the
+// English itself does not carry (proper names keep their accents).
+function phoneticPlausible(phonetic, english) {
+  if (!phonetic || !english) return false;
+  if (/[¿¡]/.test(phonetic)) return false;
+  if (/[áéíóúñ]/i.test(phonetic) && !/[áéíóúñ]/i.test(english)) return false;
+  const ratio = wordCount(phonetic) / Math.max(1, wordCount(english));
+  return ratio >= 0.6 && ratio <= 1.6;
 }
 
 function aiResponseText(ai) {
@@ -178,6 +228,15 @@ function aiResponseText(ai) {
   if (typeof content === "string" && content.trim()) return content;
   if (choice && typeof choice.text === "string") return choice.text;
   return "";
+}
+
+async function aiRun(env, messages) {
+  const ai = await env.AI.run(AI_MODEL, {
+    messages,
+    max_tokens: 300,
+    temperature: 0.2,
+  }, AI_GATEWAY);
+  return aiResponseText(ai);
 }
 
 async function handleTranslate(request, env) {
@@ -192,36 +251,34 @@ async function handleTranslate(request, env) {
   if (!text || text.length > 400) {
     return jsonResponse({ error: "Escribe una frase de hasta 400 caracteres." }, 400);
   }
-  let aiText;
+  // Step 1: get the English phrase (translate from Spanish, or
+  // lightly correct English input). Plain text out.
+  let english;
   try {
-    const ai = await env.AI.run("@cf/meta/infire-llama-3.1-8b-instruct", {
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: "Input (" + (source === "es" ? "Spanish" : "English") + "): " + text },
-      ],
-      max_tokens: 300,
-      temperature: 0.3,
-    }, {
-      gateway: {
-        id: "arananet-ai-gateway",
-        metadata: { app: "speak-easy", env: "prod" },
-      },
-    });
-    aiText = aiResponseText(ai);
+    english = cleanLine(await aiRun(env, [
+      { role: "system", content: source === "es" ? TRANSLATE_SYSTEM : CORRECT_SYSTEM },
+      { role: "user", content: text },
+    ]));
   } catch (e) {
     return jsonResponse({ error: "El servicio de traducción no responde. Inténtalo de nuevo." }, 502);
   }
-  let parsed;
-  try {
-    parsed = extractJson(aiText);
-  } catch {
-    return jsonResponse({ error: "No se pudo interpretar la respuesta. Inténtalo de nuevo." }, 502);
-  }
-  if (typeof parsed.english !== "string" || typeof parsed.phonetic !== "string" ||
-      !parsed.english.trim() || !parsed.phonetic.trim()) {
+  if (!english || english.length > 600) {
     return jsonResponse({ error: "Respuesta incompleta. Inténtalo de nuevo." }, 502);
   }
-  return jsonResponse({ english: parsed.english.trim(), phonetic: parsed.phonetic.trim() });
+  // Step 2: respell ONLY the English phrase phonetically. One retry
+  // if the sanity check smells the Spanish source leaking back in.
+  let phonetic = "";
+  try {
+    for (let attempt = 0; attempt < 2 && !phoneticPlausible(phonetic, english); attempt++) {
+      phonetic = cleanLine(await aiRun(env, phoneticMessages(english)));
+    }
+  } catch (e) {
+    return jsonResponse({ error: "El servicio de traducción no responde. Inténtalo de nuevo." }, 502);
+  }
+  if (!phoneticPlausible(phonetic, english)) {
+    return jsonResponse({ error: "No se pudo interpretar la respuesta. Inténtalo de nuevo." }, 502);
+  }
+  return jsonResponse({ english, phonetic });
 }
 
 async function handleLogin(request, env) {

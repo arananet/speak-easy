@@ -1,0 +1,64 @@
+title: "Bugfix: phonetic respelling generated from the Spanish source instead of the English translation"
+slug: "phonetic-generated-from-source-bug"
+type: bugfix
+status: review
+
+author: "arananet"
+created_at: "2026-10-24"
+updated_at: "2026-10-24"
+
+roles:
+  implementer: "arananet"
+  reviewer: null
+  qa: null
+  product_owner: "arananet"
+
+description: |
+  Reported by Edu on 2026-10-24 with a phone screenshot: translating
+  "Me gusta mi escuela" returns the correct English "I like my school"
+  but the pronunciation reads "Ai gis ta mai eskoola", which is neither
+  the English phrase nor house style. It phoneticizes fragments of the
+  Spanish source ("gusta" -> "gis ta", "escuela" -> "eskoola") with
+  Portuguese-looking spellings. The phonetic is the product for Blanca;
+  a wrong one teaches a wrong pronunciation.
+
+root_cause: |
+  A single model call was asked to translate AND respell in one JSON
+  object, on a small 8B model. The model blends both tasks and respells
+  the Spanish input instead of its own English output. Verified against
+  the live Workers AI catalog on 2026-10-24: keeping the 8B model but
+  splitting the work into two calls (translate first, then respell only
+  the English) fixes the reported case but the 8B still garbles about
+  half of a 10-phrase battery ("dchest", "sigojiente", "agua" for
+  water). The same two-step pipeline on
+  @cf/mistralai/mistral-small-3.1-24b-instruct passes the full battery,
+  which is the model-escalation path the feature spec's qa_notes
+  already prescribed ("escalate the model rather than complicating the
+  prompt").
+
+reproduction_steps:
+  - "Log in and translate 'Me gusta mi escuela' (Spanish mode)"
+  - "Observe english 'I like my school' with phonetic 'Ai gis ta mai eskoola'"
+  - "Expected phonetic: 'Ai laik mai skul'"
+
+acceptance_criteria:
+  - "'Me gusta mi escuela' returns phonetic 'Ai laik mai skul' (trailing punctuation may vary)"
+  - "The phonetic step receives ONLY the English text, never the Spanish input, so respelling the source is structurally impossible"
+  - "A 10-phrase battery covering th, w, h, ch and multi-clause phrases returns phonetics in house style with no Spanish words leaking in"
+  - "A server-side sanity check rejects a phonetic whose word count is wildly off the English word count, or that carries Spanish-only marks (¿, ¡, accented vowels absent from the English), and retries once before failing with the existing friendly 502"
+  - "scripts/test.sh passes and the {english, phonetic} API shape is unchanged for the frontend"
+
+test_plan:
+  - "Regression test: the 10-phrase battery run against production after deploy, including the reported case"
+  - "Automated: scripts/test.sh (build, syntax, phrases, spec fields, smoke test, secret scan)"
+
+implementation_skill: null
+
+regression_test: |
+  Manual battery in the deploy verification (10 Spanish phrases + 1
+  English-mode phrase) against https://speakeasy.arananet.net/api/translate;
+  the smoke test continues to cover input validation without an AI binding.
+
+linked_issues: []
+
+linked_prs: []

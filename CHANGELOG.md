@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-24 — Fix: pronunciation was respelling the Spanish source
+
+* Reported with a screenshot: "Me gusta mi escuela" translated correctly to "I like my school" but the pronunciation came back "Ai gis ta mai eskoola", fragments of the Spanish spelled Portuguese-style.
+* Root cause: one model call was asked to translate and respell in a single JSON object, and the 8B model blended both tasks. Inference is now two calls: translate (or lightly correct) first, then respell ONLY the English phrase, with few-shot pairs as chat turns in the same style as the curated phrase packs. The server validates the phonetic (word count, no Spanish-only marks) and retries once before failing.
+* Model escalated per the spec's own guidance: `@cf/meta/infire-llama-3.1-8b-instruct` still garbled half of a 10-phrase battery even with the split, so inference now runs on `@cf/mistralai/mistral-small-3.1-24b-instruct` through the shared AI gateway. Battery after the fix: 11/11 in house style, including the reported case ("Ai laik mai skul").
+* Specs: new bugfix spec `phonetic-generated-from-source-bug`; the translate feature spec updated to the two-call design.
+
 ## 2026-10-22 — Per-user logins
 
 * The single shared password is replaced by two named users, blanquita and eduardo. Each password lives only in its own Cloudflare secret binding (`BLANQUITA_PASSWORD` and `EDUARDO_PASSWORD`), and the login form now asks for a user name and a password.

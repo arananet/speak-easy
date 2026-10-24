@@ -5,7 +5,7 @@ status: review
 
 author: "arananet"
 created_at: "2026-10-19"
-updated_at: "2026-10-19"
+updated_at: "2026-10-24"
 
 roles:
   implementer: "arananet"
@@ -21,26 +21,37 @@ description: |
   accepts English input and returns just the phonetic spelling, for
   phrases she hears or reads elsewhere. Inference runs on Cloudflare
   Workers AI through the Worker's AI binding, so no API token or secret
-  is ever exposed to the browser. The model returns strict JSON
-  {english, phonetic}, parsed and validated server-side.
+  is ever exposed to the browser. Since 2026-10-24 the work is split
+  into two model calls: the first translates (or lightly corrects) and
+  returns plain text; the second receives ONLY the English phrase and
+  returns its phonetic respelling as plain text. The server validates
+  both and composes the {english, phonetic} response itself. The
+  single-call JSON design was retired by the bugfix spec
+  phonetic-generated-from-source-bug: asked to translate and respell
+  in one shot, the small model respelled the Spanish source.
 
 acceptance_criteria:
   - "Given an authenticated POST /api/translate with Spanish text, when the model responds, then the response is {english, phonetic} with natural US English and a Spanish-orthography phonetic spelling"
   - "Given the example 'My name is Eduardo', when translated, then english is 'My name is Eduardo' and phonetic reads like 'Mai neim is Eduardo' (proper names kept as-is)"
   - "Given English input in 'en' mode, when translated, then english echoes the corrected input and phonetic is its pronunciation spelling"
   - "Given input longer than 400 characters or empty input, when posted, then the server responds 400 without calling the model"
-  - "Given the model returns markdown fences or extra text around the JSON, when parsed, then the server still extracts the JSON object"
+  - "Given the model adds quotes or extra text around a plain-text reply, when cleaned, then the server still uses the phrase itself"
+  - "Given the phonetic reply, when produced, then it is derived only from the English phrase (never from the Spanish input) and passes a word-count and Spanish-marks sanity check, with one retry before a 502"
   - "Given the Workers AI call fails, when it happens, then the server responds 502 with a Spanish-language user-facing message and logs no secret"
   - "Given the phonetic output, when read aloud by a native Spanish speaker, then the result is recognizably the English phrase (spot-checked on the seed examples)"
 
 test_plan:
-  - "Automated: scripts/test.sh validates the prompt template contains the required few-shot examples and that the JSON extraction handles fenced output"
+  - "Automated: scripts/test.sh (build, syntax, phrases, spec fields, smoke test, secret scan); the two-step prompts live in the worker template and were validated against the live catalog before deploy"
+  - "Regression: the 10-phrase battery from the bugfix spec, run against production after deploy"
   - "Manual: translate 10 Spanish phrases covering th-sounds, w, h, and r; read each phonetic aloud and confirm it maps back to the English"
 
 qa_notes: |
-  Phonetic quality is the product. If llama-3.1-8b-instruct drifts on
-  tricky words, escalate the model in wrangler metadata rather than
-  complicating the prompt. Temperature stays low (0.3).
+  Phonetic quality is the product. If the model drifts on tricky
+  words, escalate the model rather than complicating the prompt.
+  Temperature stays low (0.2). The escalation path was taken on
+  2026-10-24: after the two-step split, infire-llama-3.1-8b still
+  garbled half the battery, so inference moved to
+  @cf/mistralai/mistral-small-3.1-24b-instruct, which passed 11/11.
 
 out_of_scope:
   - "Streaming responses"
@@ -48,11 +59,15 @@ out_of_scope:
   - "Grammar explanations or corrections beyond light cleanup"
 
 technical_notes: |
-  Model: @cf/meta/infire-llama-3.1-8b-instruct via env.AI.run() with the
-  chat messages format. The legacy @cf/meta/llama-3.1-8b-instruct ID was
-  deprecated on 2026-05-30 (error 5028) and the successor returns an
-  OpenAI-style chat completion, so the server reads the text from
-  choices[0].message.content with a fallback to the classic response
-  field. Prompt carries 6 few-shot pairs (Spanish->English+phonetic and
-  English->phonetic). max_tokens 300, temperature 0.3. Binding declared
-  in the worker upload metadata as {"type": "ai", "name": "AI"}.
+  Model: @cf/mistralai/mistral-small-3.1-24b-instruct via env.AI.run()
+  with the chat messages format, through the arananet-ai-gateway with
+  metadata {app: "speak-easy", env: "prod"}. Two calls per request:
+  (1) translate or correct, plain text; (2) phonetic respelling of the
+  English only, with few-shot message pairs in house style (the pairs
+  mirror the curated phrase packs). max_tokens 300, temperature 0.2.
+  History: the original @cf/meta/llama-3.1-8b-instruct was deprecated
+  on 2026-05-30 (error 5028); its successor infire-llama-3.1-8b served
+  until 2026-10-24. The server reads model text from the classic
+  response field with a fallback to choices[0].message.content.
+  Binding declared in the worker upload metadata as
+  {"type": "ai", "name": "AI"}.
